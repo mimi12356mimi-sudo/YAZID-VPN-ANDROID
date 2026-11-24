@@ -47,7 +47,8 @@ data class ServerItem(
     val name: String,
     val protocol: String,
     val host: String,
-    val port: Int
+    val port: Int,
+    val configUri: String = ""
 )
 
 data class Subscription(
@@ -70,7 +71,6 @@ class MainActivity : ComponentActivity() {
 fun YazidApp() {
     val context = androidx.compose.ui.platform.LocalContext.current
 
-    // ذخیره‌سازی رمزنگاری‌شده روی گوشی
     val prefs = remember {
         SecurePrefs(context)
     }
@@ -121,6 +121,7 @@ fun YazidApp() {
                         .put("protocol", server.protocol)
                         .put("host", server.host)
                         .put("port", server.port)
+                        .put("configUri", server.configUri)
                 )
             }
 
@@ -160,7 +161,8 @@ fun YazidApp() {
                                 name = s.optString("name"),
                                 protocol = s.optString("protocol"),
                                 host = s.optString("host"),
-                                port = s.optInt("port")
+                                port = s.optInt("port"),
+                                configUri = s.optString("configUri", "")
                             )
                         )
                     }
@@ -175,9 +177,12 @@ fun YazidApp() {
                     )
                 }
             } else {
-                // انتقال اشتراک نسخه قبلی به ساختار چنداشتراکی
-                val oldUrl = prefs.getString("subscription_url", "") ?: ""
-                val oldRaw = prefs.getString("servers", "[]") ?: "[]"
+                // مهاجرت اطلاعات نسخه قدیمی
+                val oldUrl =
+                    prefs.getString("subscription_url", "") ?: ""
+
+                val oldRaw =
+                    prefs.getString("servers", "[]") ?: "[]"
 
                 if (oldUrl.isNotBlank()) {
                     val oldArray = JSONArray(oldRaw)
@@ -187,6 +192,7 @@ fun YazidApp() {
                     for (i in 0 until oldArray.length()) {
                         val s = oldArray.getJSONObject(i)
                         val address = s.optString("address")
+
                         val host = address.substringBeforeLast(":")
                         val port = address.substringAfterLast(":")
                             .toIntOrNull() ?: 443
@@ -197,7 +203,8 @@ fun YazidApp() {
                                 name = s.optString("name"),
                                 protocol = s.optString("protocol"),
                                 host = host,
-                                port = port
+                                port = port,
+                                configUri = ""
                             )
                         )
                     }
@@ -214,7 +221,8 @@ fun YazidApp() {
                     saveAll()
                 }
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            error = "خطا در خواندن اطلاعات ذخیره‌شده"
         }
     }
 
@@ -298,13 +306,11 @@ fun YazidApp() {
         showDelete = null
     }
 
-    // تست پینگ همه سرورها به ترتیب
     fun testAllPings() {
         if (pingAllBusy || allServers.isEmpty()) return
 
         pingAllBusy = true
 
-        // پاک کردن نتایج قبلی تا نتایج جدید مشخص باشند
         allServers.forEach {
             pingResults[it.id] = -1
         }
@@ -511,7 +517,7 @@ fun YazidApp() {
                         Spacer(Modifier.height(12.dp))
 
                         Text(
-                            "اتصال واقعی VPN هنوز در این نسخه پیاده‌سازی نشده است.",
+                            "اتصال واقعی VPN در مرحله بعد فعال می‌شود.",
                             color = Muted,
                             fontSize = 11.sp
                         )
@@ -527,7 +533,6 @@ fun YazidApp() {
 
                         Spacer(Modifier.height(10.dp))
 
-                        // دکمه تست پینگ همه سرورها
                         Button(
                             onClick = { testAllPings() },
                             enabled = !pingAllBusy && allServers.isNotEmpty(),
@@ -712,7 +717,6 @@ fun YazidApp() {
 
                                 Spacer(Modifier.height(12.dp))
 
-                                // پشتیبانی قابل کلیک
                                 Text(
                                     "پشتیبانی: @YazidSup",
                                     color = Blue,
@@ -1071,7 +1075,9 @@ private fun fetchSubscription(link: String): List<ServerItem> {
         }
 
         return result.distinctBy {
-            it.protocol + it.host + it.port + it.name
+            it.configUri.ifBlank {
+                "${it.protocol}|${it.host}|${it.port}|${it.name}"
+            }
         }
     } finally {
         connection.disconnect()
@@ -1124,10 +1130,6 @@ private fun parseLines(text: String): List<ServerItem> {
                             ?: return@forEach
 
                         val json = JSONObject(decoded)
-
-                        val name = json.optString("ps")
-                            .ifBlank { "بدون نام در اشتراک" }
-
                         val host = json.optString("add")
                         val port = json.optString("port")
                             .toIntOrNull() ?: 443
@@ -1135,53 +1137,100 @@ private fun parseLines(text: String): List<ServerItem> {
                         if (host.isNotBlank()) {
                             result.add(
                                 ServerItem(
-                                    UUID.randomUUID().toString(),
-                                    name,
-                                    "VMess",
-                                    host,
-                                    port
+                                    id = UUID.randomUUID().toString(),
+                                    name = json.optString("ps")
+                                        .ifBlank { "VMess Server" },
+                                    protocol = "VMess",
+                                    host = host,
+                                    port = port,
+                                    configUri = line
                                 )
                             )
                         }
                     }
 
                     line.startsWith("vless://", true) ||
-                    line.startsWith("ss://", true) ||
                     line.startsWith("trojan://", true) -> {
                         val uri = Uri.parse(line)
-
-                        val protocol = when {
-                            line.startsWith("vless://", true) ->
-                                "VLESS"
-
-                            line.startsWith("ss://", true) ->
-                                "Shadowsocks"
-
-                            else -> "Trojan"
-                        }
-
-                        val name = uri.fragment
-                            ?.let { Uri.decode(it) }
-                            ?.ifBlank { "بدون نام در اشتراک" }
-                            ?: "بدون نام در اشتراک"
-
                         val host = uri.host ?: return@forEach
                         val port = if (uri.port > 0) uri.port else 443
 
+                        val protocol = if (
+                            line.startsWith("vless://", true)
+                        ) "VLESS" else "Trojan"
+
+                        val name = uri.fragment
+                            ?.let { Uri.decode(it) }
+                            ?.ifBlank { "$protocol Server" }
+                            ?: "$protocol Server"
+
                         result.add(
                             ServerItem(
-                                UUID.randomUUID().toString(),
-                                name,
-                                protocol,
-                                host,
-                                port
+                                id = UUID.randomUUID().toString(),
+                                name = name,
+                                protocol = protocol,
+                                host = host,
+                                port = port,
+                                configUri = line
                             )
                         )
                     }
+
+                    line.startsWith("ss://", true) -> {
+                        val parsed = parseShadowsocksLine(line)
+                            ?: return@forEach
+
+                        result.add(parsed)
+                    }
                 }
             } catch (_: Exception) {
+                // Ignore invalid subscription entries
             }
         }
 
-    return result
+    return result.distinctBy {
+        it.configUri.ifBlank {
+            "${it.protocol}|${it.host}|${it.port}|${it.name}"
+        }
+    }
+}
+
+private fun parseShadowsocksLine(line: String): ServerItem? {
+    val uri = Uri.parse(line)
+
+    var host = uri.host
+    var port = uri.port
+
+    // پشتیبانی از فرمت قدیمی Shadowsocks که کل بخش اتصال Base64 است
+    if (host.isNullOrBlank()) {
+        val payload = line
+            .substringAfter("://")
+            .substringBefore("#")
+            .substringBefore("?")
+
+        val decoded = decodePayload(payload) ?: return null
+        val authority = decoded.substringAfterLast("@", decoded)
+
+        val decodedUri = Uri.parse("ss://$authority")
+        host = decodedUri.host
+        port = decodedUri.port
+    }
+
+    if (host.isNullOrBlank()) return null
+
+    if (port <= 0) port = 443
+
+    val name = uri.fragment
+        ?.let { Uri.decode(it) }
+        ?.ifBlank { "Shadowsocks Server" }
+        ?: "Shadowsocks Server"
+
+    return ServerItem(
+        id = UUID.randomUUID().toString(),
+        name = name,
+        protocol = "Shadowsocks",
+        host = host,
+        port = port,
+        configUri = line
+    )
 }
