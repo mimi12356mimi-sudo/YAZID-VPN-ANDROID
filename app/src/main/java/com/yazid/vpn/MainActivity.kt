@@ -66,8 +66,10 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun YazidApp() {
     val context = androidx.compose.ui.platform.LocalContext.current
+
+    // ذخیره‌سازی رمزنگاری‌شده روی گوشی
     val prefs = remember {
-        context.getSharedPreferences("yazid_vpn", 0)
+        SecurePrefs(context)
     }
 
     val scope = rememberCoroutineScope()
@@ -301,7 +303,6 @@ fun YazidApp() {
             pingingId = null
         }
     }
-
     MaterialTheme(
         colorScheme = lightColorScheme(
             primary = Blue,
@@ -795,9 +796,7 @@ fun YazidApp() {
             )
         }
     }
-}
-
-@Composable
+}@Composable
 private fun ServerCard(
     server: ServerItem,
     selected: Boolean,
