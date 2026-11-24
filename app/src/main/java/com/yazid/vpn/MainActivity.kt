@@ -1,6 +1,7 @@
 
 package com.yazid.vpn
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.util.Base64
@@ -59,7 +60,9 @@ data class Subscription(
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { YazidApp() }
+        setContent {
+            YazidApp()
+        }
     }
 }
 
@@ -96,7 +99,13 @@ fun YazidApp() {
         )
     }
 
-    var pingingId by remember { mutableStateOf<String?>(null) }
+    var pingingId by remember {
+        mutableStateOf<String?>(null)
+    }
+
+    var pingAllBusy by remember {
+        mutableStateOf(false)
+    }
 
     fun saveAll() {
         val array = JSONArray()
@@ -289,20 +298,35 @@ fun YazidApp() {
         showDelete = null
     }
 
-    fun testPing(server: ServerItem) {
-        if (pingingId != null) return
+    // تست پینگ همه سرورها به ترتیب
+    fun testAllPings() {
+        if (pingAllBusy || allServers.isEmpty()) return
 
-        pingingId = server.id
+        pingAllBusy = true
+
+        // پاک کردن نتایج قبلی تا نتایج جدید مشخص باشند
+        allServers.forEach {
+            pingResults[it.id] = -1
+        }
 
         scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runIcmpPing(server.host)
-            }
+            try {
+                for (server in allServers) {
+                    pingingId = server.id
 
-            pingResults[server.id] = result ?: -1
-            pingingId = null
+                    val result = withContext(Dispatchers.IO) {
+                        runIcmpPing(server.host)
+                    }
+
+                    pingResults[server.id] = result ?: -1
+                }
+            } finally {
+                pingingId = null
+                pingAllBusy = false
+            }
         }
     }
+
     MaterialTheme(
         colorScheme = lightColorScheme(
             primary = Blue,
@@ -503,6 +527,43 @@ fun YazidApp() {
 
                         Spacer(Modifier.height(10.dp))
 
+                        // دکمه تست پینگ همه سرورها
+                        Button(
+                            onClick = { testAllPings() },
+                            enabled = !pingAllBusy && allServers.isNotEmpty(),
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Blue
+                            )
+                        ) {
+                            if (pingAllBusy) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = White
+                                )
+
+                                Spacer(Modifier.width(9.dp))
+
+                                Text(
+                                    "در حال تست ${pingingId?.let { id ->
+                                        allServers.find { it.id == id }?.name
+                                    } ?: "سرورها"}..."
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Default.NetworkPing,
+                                    contentDescription = null
+                                )
+
+                                Spacer(Modifier.width(8.dp))
+
+                                Text("تست پینگ همه سرورها")
+                            }
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+
                         if (allServers.isEmpty()) {
                             EmptyMessage("هنوز سروری اضافه نشده")
                         } else {
@@ -519,13 +580,9 @@ fun YazidApp() {
                                         selected = server.id == selectedServerId,
                                         best = server.id == bestServer?.id,
                                         ping = pingResults[server.id],
-                                        loading = pingingId == server.id,
                                         onSelect = {
                                             selectedServerId = server.id
                                             saveAll()
-                                        },
-                                        onPing = {
-                                            testPing(server)
                                         }
                                     )
                                 }
@@ -655,9 +712,17 @@ fun YazidApp() {
 
                                 Spacer(Modifier.height(12.dp))
 
+                                // پشتیبانی قابل کلیک
                                 Text(
                                     "پشتیبانی: @YazidSup",
-                                    color = Muted
+                                    color = Blue,
+                                    modifier = Modifier.clickable {
+                                        val intent = Intent(
+                                            Intent.ACTION_VIEW,
+                                            Uri.parse("https://t.me/YazidSup")
+                                        )
+                                        context.startActivity(intent)
+                                    }
                                 )
 
                                 Text(
@@ -731,15 +796,18 @@ fun YazidApp() {
 
                         if (busy) {
                             Spacer(Modifier.height(12.dp))
+
                             CircularProgressIndicator(
                                 modifier = Modifier.size(25.dp),
                                 color = Blue
                             )
+
                             Text(loadingMessage, color = Blue)
                         }
 
                         if (error != null) {
                             Spacer(Modifier.height(8.dp))
+
                             Text(
                                 error ?: "",
                                 color = Color.Red,
@@ -796,15 +864,15 @@ fun YazidApp() {
             )
         }
     }
-}@Composable
+}
+
+@Composable
 private fun ServerCard(
     server: ServerItem,
     selected: Boolean,
     best: Boolean,
     ping: Int?,
-    loading: Boolean,
-    onSelect: () -> Unit,
-    onPing: () -> Unit
+    onSelect: () -> Unit
 ) {
     Card(
         modifier = Modifier
@@ -889,28 +957,6 @@ private fun ServerCard(
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f)
                 )
-
-                OutlinedButton(
-                    onClick = onPing,
-                    enabled = !loading
-                ) {
-                    if (loading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        Icon(
-                            Icons.Default.NetworkPing,
-                            null,
-                            modifier = Modifier.size(17.dp)
-                        )
-                        Spacer(Modifier.width(5.dp))
-                        Text("گرفتن پینگ")
-                    }
-                }
-
-                Spacer(Modifier.width(5.dp))
 
                 TextButton(onClick = onSelect) {
                     Text(
